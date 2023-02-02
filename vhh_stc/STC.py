@@ -4,6 +4,7 @@ import os
 from vhh_stc.Models import loadModel
 from vhh_stc.CustomTransforms import ToGrayScale
 import torch
+from torch.utils.data import TensorDataset, DataLoader
 from PIL import Image
 from torch.autograd import Variable
 from torch.utils import data
@@ -63,7 +64,7 @@ class STC(object):
 
         if (len(shots_np) == 0):
             print("ERROR: there must be at least one shot in the list!")
-            exit()
+            return
 
         with open(self.config_instance.path_pre_trained_model + "/" + "/experiment_notes.json", 'r') as json_file:
             param_dict = json.load(json_file)
@@ -114,7 +115,7 @@ class STC(object):
             shot_id = int(shot["sid"])
             start = int(shot["start"])
             stop = int(shot["end"])
-        
+                    
             # run classifier
             predictions = self.runModel(model, shot_tensors)
 
@@ -199,19 +200,35 @@ class STC(object):
                  frame-based predictions for a whole shot
         """
         input_batch = Variable(tensor_l)
+        
+        dataset = TensorDataset(tensor_l)
+        dataloader = DataLoader(dataset=dataset, 
+                                shuffle=False, 
+                                batch_size=self.config_instance.batch_size, 
+                                num_workers=4
+                            )
 
         # move the input and model to GPU for speed if available
         if torch.cuda.is_available():
-            input_batch = input_batch.to('cuda')
+            #input_batch = input_batch.to('cuda')
             model.to('cuda')
 
         model.eval()
+        shot_pred_l = []
         with torch.no_grad():
-            output = model(input_batch)
-            preds = output.argmax(1, keepdim=True)
-            preds_l = preds.detach().cpu().numpy().flatten()
+            for i, data in enumerate(dataloader, 0):
+                img_tensor_batch = data[0]
+                if torch.cuda.is_available():
+                    img_tensor_batch = img_tensor_batch.to('cuda')
+                #print(img_tensor_batch.size())
+                output = model(img_tensor_batch)
+                preds = output.argmax(1, keepdim=True)
+                preds_l = preds.detach().cpu().numpy().flatten()
+                shot_pred_l.extend(preds_l)
 
-        return preds_l
+        shot_pred_np = np.array(shot_pred_l)
+        #print(shot_pred_np.shape)
+        return shot_pred_np
 
     def loadSbdResults(self, sbd_results_path):
         """
@@ -293,18 +310,39 @@ class STC(object):
             exit()
 
         # open stc resutls file
-        if (self.config_instance.debug_flag == True):
-            fp = open(self.debug_results + "/" + fName + ".csv", 'w')
-        else:
-            fp = open(self.config_instance.path_final_results + "/" + fName + ".csv", 'w')
-        header = "vid_name;shot_id;start;end;stc"
-        fp.write(header + "\n")
 
-        for i in range(0, len(stc_results_np)):
-            tmp_line = str(stc_results_np[i][0])
-            for c in range(1, len(stc_results_np[i])):
-                tmp_line = tmp_line + ";" + stc_results_np[i][c]
-            fp.write(tmp_line + "\n")
+        if(self.config_instance.path_postfix_final_results == "csv"):
+        
+            if (self.config_instance.debug_flag == True):
+                fp = open(self.debug_results + "/" + fName + ".csv", 'w')
+            else:
+                fp = open(self.config_instance.path_final_results + "/" + fName + ".csv", 'w')
+            header = "vid_name;shot_id;start;end;stc"
+            fp.write(header + "\n")
+
+            for i in range(0, len(stc_results_np)):
+                tmp_line = str(stc_results_np[i][0])
+                for c in range(1, len(stc_results_np[i])):
+                    tmp_line = tmp_line + ";" + stc_results_np[i][c]
+                fp.write(tmp_line + "\n")
+
+        elif(self.config_instance.path_postfix_final_results == "json"):
+            shot_dict_l = []
+            for i in range(0, len(stc_results_np)):
+                tmp_line = str(stc_results_np[i][0])
+                tmp_split = tmp_line.split(';')
+                
+                shot_dict = {
+                    "shotId": tmp_split[1],
+                    "inPoint": tmp_split[2],
+                    "outPoint": tmp_split[3],
+                    "shotType": tmp_split[4],
+                }
+                shot_dict_l.append(shot_dict)
+
+            if (len(shot_dict_l) > 0):
+                with open(self.config_instance.path_final_results + "/" + fName + ".json", 'w') as outfile:
+                    json.dump(shot_dict_l, outfile)
 
     def extract_frames_per_shot(self, shots_per_vid_np=None, number_of_frames=1, dst_path="", video_path=""):
         print(f'extract {number_of_frames} frame(s) of each shot...')
