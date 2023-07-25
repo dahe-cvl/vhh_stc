@@ -114,6 +114,8 @@ class STC(object):
             shot_id = int(shot["sid"])
             start = int(shot["start"])
             stop = int(shot["end"])
+            print("DDDDDDDDDDDDDDDDDDDDDD")
+            print(shot_tensors.size())
         
             # run classifier
             predictions = self.runModel(model, shot_tensors)
@@ -210,7 +212,6 @@ class STC(object):
             output = model(input_batch)
             preds = output.argmax(1, keepdim=True)
             preds_l = preds.detach().cpu().numpy().flatten()
-
         return preds_l
 
     def loadSbdResults(self, sbd_results_path):
